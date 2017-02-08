@@ -9,6 +9,8 @@ from moviepy.editor import VideoFileClip
 def process_frame(img):
     global mtx
     global dist
+    global left_marker
+    global right_marker
 
     img = cv2.undistort(img, mtx, dist, None, mtx)
     hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
@@ -23,14 +25,28 @@ def process_frame(img):
     mag_binary = ip.mag_thresh(gray, sobel_kernel=ksize, mag_thresh=(50, 150))
     dir_binary = ip.dir_threshold(gray, sobel_kernel=ksize, thresh=(0.7, 1.3))
     combined = np.zeros_like(gradx)
-    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 255
+    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
 
     src_pts = [[420, 570], [265, 680], [1050, 680], [876, 570]]
     dst_pts = [[200, 570], [200, 680], [1080, 680], [1080, 570]]
     warped = ip.perspective_transform(combined, src_pts, dst_pts)
 
-    return cv2.merge((warped, warped, warped))
-    #return warped
+    # todo: store fit, reuse fit, measure fit certainty
+    left_marker, right_marker = ip.poly_fit(warped, left_marker, right_marker)
+
+    # Re-build frame
+    warp_zero = np.zeros_like(warped).astype(np.uint8)
+    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+    warped_lane = ip.annotate_poly_fit(color_warp, left_marker.poly_fit_px(), right_marker.poly_fit_px())
+
+    annotated_lane = ip.perspective_transform(warped_lane, dst_pts, src_pts)
+    result = cv2.addWeighted(img, 1, annotated_lane, 0.3, 0)
+
+    radius = (left_marker.curvature_radius() + right_marker.curvature_radius()) / 2
+    radius_str = "Curvature radius: {0:.1f}m".format(radius)
+    cv2.putText(result, radius_str, (10, 100), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255))
+
+    return result
 
 
 if __name__ == "__main__":
@@ -44,6 +60,9 @@ if __name__ == "__main__":
         cal_dict = pickle.load(pfile)
         mtx = cal_dict["mtx"]
         dist = cal_dict["dist"]
+
+    left_marker = None
+    right_marker = None
 
     in_video = VideoFileClip(args.input)
     out_video = in_video.fl_image(process_frame)
