@@ -1,59 +1,21 @@
-import cv2
 import argparse
 import pickle
 import numpy as np
-import image_processing as ip
 from moviepy.editor import VideoFileClip
-
-
-def process_frame(img):
-    global mtx
-    global dist
-    global left_marker
-    global right_marker
-
-    img = cv2.undistort(img, mtx, dist, None, mtx)
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    # gray = hsv[:, :, 1]
-    
-    ksize = 5  # Choose a larger odd number to smooth gradient measurements
-
-    # Apply each of the thresholding functions
-    gradx = ip.abs_sobel_thresh(gray, orient='x', sobel_kernel=ksize, thresh=(50, 150))
-    grady = ip.abs_sobel_thresh(gray, orient='y', sobel_kernel=ksize, thresh=(50, 150))
-    mag_binary = ip.mag_thresh(gray, sobel_kernel=ksize, mag_thresh=(50, 150))
-    dir_binary = ip.dir_threshold(gray, sobel_kernel=ksize, thresh=(0.7, 1.3))
-    combined = np.zeros_like(gradx)
-    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
-
-    src_pts = [[420, 570], [265, 680], [1050, 680], [876, 570]]
-    dst_pts = [[200, 570], [200, 680], [1080, 680], [1080, 570]]
-    warped = ip.perspective_transform(combined, src_pts, dst_pts)
-
-    # todo: store fit, reuse fit, measure fit certainty
-    left_marker, right_marker = ip.poly_fit(warped, left_marker, right_marker)
-
-    # Re-build frame
-    warp_zero = np.zeros_like(warped).astype(np.uint8)
-    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
-    warped_lane = ip.annotate_poly_fit(color_warp, left_marker.poly_fit_px(), right_marker.poly_fit_px())
-
-    annotated_lane = ip.perspective_transform(warped_lane, dst_pts, src_pts)
-    result = cv2.addWeighted(img, 1, annotated_lane, 0.3, 0)
-
-    radius = (left_marker.curvature_radius() + right_marker.curvature_radius()) / 2
-    radius_str = "Curvature radius: {0:.1f}m".format(radius)
-    cv2.putText(result, radius_str, (10, 100), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255))
-
-    return result
-
+import matplotlib.pyplot as plt
+from LaneFinder import LaneFinder
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Driving Lane Detection')
-    parser.add_argument('--input', default='./short_project_video.mp4', help='Path to input video file.')
-    parser.add_argument('--output', default='./output_videos/short_project_video.mp4', help='Path to output video file.')
+    parser.add_argument('--input', default='./project_video.mp4', help='Path to input video file.')
+    parser.add_argument('--output', default='./output_videos/project_video.mp4', help='Path to output video file.')
     parser.add_argument('--calibration_file', default='./camera_cal/calibration.p', help='Camera calibration params')
+    parser.add_argument('--start', default=0, type=float)
+    parser.add_argument('--end', default=None, type=float)
+    parser.add_argument('--debug', dest='debug', action='store_true')
+    parser.add_argument('--no-debug', dest='debug', action='store_false')
+    parser.set_defaults(debug=False)
+
     args = parser.parse_args()
 
     with open(args.calibration_file, 'rb') as pfile:
@@ -61,10 +23,75 @@ if __name__ == "__main__":
         mtx = cal_dict["mtx"]
         dist = cal_dict["dist"]
 
-    left_marker = None
-    right_marker = None
+    finder = LaneFinder(kernel_size=3,
+                        cam_mtx=mtx,
+                        cam_dist=dist,
+                        s_thr=(120, 255),
+                        l_thr=50,
+                        sobel_thr=(20, 255),
+                        window_width=75,
+                        num_windows=10,
+                        pixel_thr=50,
+                        debug=args.debug)
 
-    in_video = VideoFileClip(args.input)
-    out_video = in_video.fl_image(process_frame)
+    start = float(args.start)
+    end = float(args.end) if args.end is not None else None
+    in_video = VideoFileClip(args.input).subclip(t_start=start, t_end=end)
+    out_video = in_video.fl_image(finder.process_frame)
     out_video.write_videofile(args.output, audio=False)
+
+    if args.debug:
+        fps = in_video.fps
+        print("fps = %s" % fps)
+        frame_cnt = 0
+        frame_info = "L radius = {0:4.1f} (pts = {1:d}), R radius = {2:4.1f} (pts = {3:d}) - Failed : {4}"
+        for frame in finder.debug_log():
+            print(frame_info.format(frame['left'].curvature_radius(),
+                                    len(frame['left'].x_values()),
+                                    frame['right'].curvature_radius(),
+                                    len(frame['right'].x_values()),
+                                    frame['failed']))
+            print(lane_info.format(np.min(frame['left'].y_values()),
+                                   np.max(frame['left'].y_values()),
+                                   np.min(frame['right'].y_values()),
+                                   np.max(frame['right'].y_values())))
+            frame_img = in_video.get_frame(frame_cnt / fps)
+            f, ax = plt.subplots(4, 3, figsize=(15, 10))
+            f.subplots_adjust(hspace=0.3)
+            ax[0, 0].imshow(frame_img)
+            ax[0, 0].set_title('Video', fontsize=10)
+            ax[0, 1].imshow(frame['undistorted'], cmap='gray')
+            ax[0, 1].set_title('Undistorted', fontsize=10)
+            ax[0, 2].imshow(frame['result'])
+            ax[0, 2].set_title('Pipeline', fontsize=10)
+
+            ax[1, 0].imshow(frame['s'], cmap='gray')
+            ax[1, 0].set_title('S (HLS)', fontsize=10)
+            ax[1, 1].imshow(frame['l'], cmap='gray')
+            ax[1, 1].set_title('L (HLS)', fontsize=10)
+            ax[1, 2].imshow(frame['red'], cmap='gray')
+            ax[1, 2].set_title('R (RGB)', fontsize=10)
+
+            ax[2, 0].imshow(frame['x_gradient'], cmap='gray')
+            ax[2, 0].set_title('Grad X', fontsize=10)
+            ax[2, 1].imshow(frame['y_gradient'], cmap='gray')
+            ax[2, 1].set_title('Grad Y', fontsize=10)
+            ax[2, 2].imshow(frame['s_binary'], cmap='gray')
+            ax[2, 2].set_title('S Binary', fontsize=10)
+
+            ax[3, 1].imshow(frame['combined'], cmap='gray')
+            ax[3, 1].set_title('Combined', fontsize=10)
+            pipeline_img = frame['warped']
+            ax[3, 2].imshow(pipeline_img, cmap='gray')
+            left_fit = frame['left'].poly_fit_px()
+            right_fit = frame['right'].poly_fit_px()
+            plot = np.linspace(0, pipeline_img.shape[0]-1, pipeline_img.shape[0])
+            lx = left_fit[0] * plot ** 2 + left_fit[1] * plot + left_fit[2]
+            rx = right_fit[0] * plot ** 2 + right_fit[1] * plot + right_fit[2]
+            ax[3, 2].plot(lx, plot, color='yellow')
+            ax[3, 2].plot(rx, plot, color='yellow')
+            ax[3, 2].set_title('Warped', fontsize=10)
+
+            plt.show(block=True)
+            frame_cnt += 1
 
