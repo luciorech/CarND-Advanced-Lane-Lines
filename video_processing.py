@@ -44,17 +44,14 @@ if __name__ == "__main__":
         fps = in_video.fps
         print("fps = %s" % fps)
         frame_cnt = 0
-        frame_info = "L radius = {0:4.1f} (pts = {1:d}), R radius = {2:4.1f} (pts = {3:d}) - Failed : {4}"
+        frame_info = "L radius = {0:4.1f} (pts = {1:d}), R radius = {2:4.1f} (pts = {3:d}) - Offset = {4:1.2f}, Failed : {5}"
         for frame in finder.debug_log():
             print(frame_info.format(frame['left'].curvature_radius(),
                                     len(frame['left'].x_values()),
                                     frame['right'].curvature_radius(),
                                     len(frame['right'].x_values()),
+                                    frame['offset'],
                                     frame['failed']))
-            print(lane_info.format(np.min(frame['left'].y_values()),
-                                   np.max(frame['left'].y_values()),
-                                   np.min(frame['right'].y_values()),
-                                   np.max(frame['right'].y_values())))
             frame_img = in_video.get_frame(frame_cnt / fps)
             f, ax = plt.subplots(4, 3, figsize=(15, 10))
             f.subplots_adjust(hspace=0.3)

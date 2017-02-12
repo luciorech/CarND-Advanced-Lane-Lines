@@ -29,9 +29,11 @@ class LaneFinder:
         self._debug = debug
         self._debug_log = []
 
+        self._previous_offset = []
         self._previous_l = []
         self._previous_r = []
         self._failure_cnt = 0
+        self._lane_departure_thr = 0.5
 
     def process_frame(self, img):
         img_width = img.shape[1]
@@ -78,6 +80,14 @@ class LaneFinder:
             self._failure_cnt = 0
             left_marker, right_marker = self.verify_markers(left_marker, right_marker)
 
+        self._previous_l.append(left_marker)
+        self._previous_r.append(right_marker)
+
+        roc_l = np.mean([m.curvature_radius() for m in self._previous_l[-15:]])
+        roc_r = np.mean([m.curvature_radius() for m in self._previous_r[-15:]])
+        offset = self.car_offset(warped.shape, left_marker, right_marker, 0.25 / 0.24)
+        self._previous_offset.append(offset)
+
         # Re-build frame
         warp_zero = np.zeros_like(warped).astype(np.uint8)
         color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
@@ -85,14 +95,10 @@ class LaneFinder:
 
         annotated_lane = ip.perspective_transform(warped_lane, dst_pts, src_pts)
         result = cv2.addWeighted(img, 1, annotated_lane, 0.3, 0)
-
-        self._previous_l.append(left_marker)
-        self._previous_r.append(right_marker)
-
-        roc_l = np.mean([m.curvature_radius() for m in self._previous_l[-15:]])
-        roc_r = np.mean([m.curvature_radius() for m in self._previous_r[-15:]])
         radius_str = "Curvature L: {0:5.0f}m R: {1:5.0f}m".format(roc_l, roc_r)
-        cv2.putText(result, radius_str, (10, 50), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255))
+        cv2.putText(result, radius_str, (10, 40), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255))
+        offset_str = "Car offset: {0:1.2f}m".format(offset)
+        cv2.putText(result, offset_str, (10, 80), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255))
 
         if self._debug:
             self._debug_log.append({'left': left_marker,
@@ -107,6 +113,7 @@ class LaneFinder:
                                     'y_gradient': y_gradient,
                                     'combined': combined,
                                     'warped': warped_dbg,
+                                    'offset': offset,
                                     'failed': self._failure_cnt})
 
         return result
@@ -129,6 +136,17 @@ class LaneFinder:
     def debug_log(self):
         return self._debug_log
 
+    def car_offset(self, shape, left_marker, right_marker, warp_factor):        
+        y = shape[0] - 1
+        l_fit = left_marker.poly_fit_px()
+        lx = l_fit[0] * y ** 2 + l_fit[1] * y + l_fit[2]
+        r_fit = right_marker.poly_fit_px()
+        rx = r_fit[0] * y ** 2 + r_fit[1] * y + r_fit[2]
+        center = shape[1] / 2
+        px_offset = (center - ((rx + lx) / 2)) * warp_factor
+        m_offset = px_offset * LaneMarker.xm_per_px
+        return m_offset
+
     def annotate_lane(self, img, left_marker, right_marker):
         """
         Draws the lane over an existing image
@@ -145,7 +163,7 @@ class LaneFinder:
         pts_right = np.array([np.flipud(np.transpose(np.vstack([rx, plot])))])
         pts = np.hstack((pts_left, pts_right))
 
-        color = (0, 255, 0) if self._failure_cnt <= 1 else (255, 0, 0)
+        color = (0, 255, 0) if abs(self._previous_offset[-1]) <= self._lane_departure_thr else (255, 0, 0)
         cv2.fillPoly(img, np.int_([pts]), color)
         return img
 
