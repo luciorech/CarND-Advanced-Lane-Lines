@@ -26,9 +26,9 @@ if __name__ == "__main__":
     finder = LaneFinder(kernel_size=3,
                         cam_mtx=mtx,
                         cam_dist=dist,
-                        s_thr=(120, 255),
+                        s_thr=(100, 255),
                         l_thr=50,
-                        sobel_thr=(20, 255),
+                        sobel_thr=(20, 180),
                         window_width=75,
                         num_windows=10,
                         pixel_thr=50,
@@ -45,6 +45,7 @@ if __name__ == "__main__":
         print("fps = %s" % fps)
         frame_cnt = 0
         frame_info = "L radius = {0:4.1f} (pts = {1:d}), R radius = {2:4.1f} (pts = {3:d}) - Offset = {4:1.2f}, Failed : {5}"
+        fit_info = "L fit = {0}, R fit = {1}"
         for frame in finder.debug_log():
             print(frame_info.format(frame['left'].curvature_radius(),
                                     len(frame['left'].x_values()),
@@ -52,6 +53,9 @@ if __name__ == "__main__":
                                     len(frame['right'].x_values()),
                                     frame['offset'],
                                     frame['failed']))
+            print(fit_info.format(frame['left'].poly_fit_px(),
+                                  frame['right'].poly_fit_px()))
+
             frame_img = in_video.get_frame(frame_cnt / fps)
             f, ax = plt.subplots(4, 3, figsize=(15, 10))
             f.subplots_adjust(hspace=0.3)

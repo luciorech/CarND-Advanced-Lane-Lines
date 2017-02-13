@@ -61,6 +61,8 @@ class LaneFinder:
 
         # RGB part of the pipeline
         r = undist[:, :, 0]
+        yw_mask = ip.get_yellow_white_mask(undist)
+        r = cv2.bitwise_and(r, r, mask=yw_mask)
         x_gradient = ip.abs_sobel_thresh(r, orient='x', sobel_kernel=self._kernel_size, thresh=self._sobel_thr)
         y_gradient = ip.abs_sobel_thresh(r, orient='y', sobel_kernel=self._kernel_size, thresh=self._sobel_thr)
 
@@ -74,12 +76,11 @@ class LaneFinder:
             left_marker, right_marker, warped_dbg = self.find_lanes_poly_fit(warped,
                                                                              self._previous_l[-1],
                                                                              self._previous_r[-1])
-            left_marker, right_marker = self.verify_markers(left_marker, right_marker)
         else:
             left_marker, right_marker, warped_dbg = self.find_lanes_histogram(warped)
             self._failure_cnt = 0
-            left_marker, right_marker = self.verify_markers(left_marker, right_marker)
 
+        left_marker, right_marker = self.verify_markers(left_marker, right_marker)
         self._previous_l.append(left_marker)
         self._previous_r.append(right_marker)
 
@@ -127,6 +128,36 @@ class LaneFinder:
             right_marker = self._previous_r[-1]
             failed = True
 
+        if len(self._previous_l) and len(self._previous_r):
+            # If lane marker is too far away from previous frame, we don't trust this measurement
+            y_pos_top = 50
+            y_pos_middle = 300
+            y_pos_bottom = 719
+            max_offset = 50
+            max_top_offset = 80
+            if abs(self._previous_l[-1].x_px_pos(y_pos_middle) - left_marker.x_px_pos(y_pos_middle)) > max_offset or \
+               abs(self._previous_l[-1].x_px_pos(y_pos_bottom) - left_marker.x_px_pos(y_pos_bottom)) > max_offset or \
+               abs(self._previous_l[-1].x_px_pos(y_pos_top) - left_marker.x_px_pos(y_pos_top)) > max_top_offset:
+                left_marker = self._previous_l[-1]
+                failed = True
+            if abs(self._previous_r[-1].x_px_pos(y_pos_middle) - right_marker.x_px_pos(y_pos_middle)) > max_offset or \
+               abs(self._previous_r[-1].x_px_pos(y_pos_bottom) - right_marker.x_px_pos(y_pos_bottom)) > max_offset or \
+               abs(self._previous_r[-1].x_px_pos(y_pos_top) - right_marker.x_px_pos(y_pos_top)) > max_top_offset:
+                right_marker = self._previous_r[-1]
+                failed = True
+
+            # If lane markers do not agree in relation with curvature
+            # we estimate which one is correct based on quadratic factor of the polynomial
+            lx2 = left_marker.poly_fit_px()[0]
+            rx2 = right_marker.poly_fit_px()[0]
+            if abs(lx2 - rx2) > 3e-4 and ((lx2 < 0) != (rx2 < 0)):
+                lx2_diff = abs(lx2 - self._previous_l[-1].poly_fit_px()[0])
+                rx2_diff = abs(rx2 - self._previous_r[-1].poly_fit_px()[0])
+                if rx2_diff < lx2_diff:
+                    left_marker = self._previous_l[-1]
+                else:
+                    right_marker = self._previous_r[-1]
+
         if failed:
             self._failure_cnt += 1
         else:
@@ -136,12 +167,9 @@ class LaneFinder:
     def debug_log(self):
         return self._debug_log
 
-    def car_offset(self, shape, left_marker, right_marker, warp_factor):        
-        y = shape[0] - 1
-        l_fit = left_marker.poly_fit_px()
-        lx = l_fit[0] * y ** 2 + l_fit[1] * y + l_fit[2]
-        r_fit = right_marker.poly_fit_px()
-        rx = r_fit[0] * y ** 2 + r_fit[1] * y + r_fit[2]
+    def car_offset(self, shape, left_marker, right_marker, warp_factor):
+        lx = left_marker.x_px_pos(shape[0] - 1)
+        rx = right_marker.x_px_pos(shape[0] - 1)
         center = shape[1] / 2
         px_offset = (center - ((rx + lx) / 2)) * warp_factor
         m_offset = px_offset * LaneMarker.xm_per_px
@@ -154,7 +182,7 @@ class LaneFinder:
         left_fit = left_marker.poly_fit_px()
         right_fit = right_marker.poly_fit_px()
 
-        plot = np.linspace(0, img.shape[0] - 1, img.shape[0])
+        plot = np.linspace(100, img.shape[0] - 1, img.shape[0] - 100)
         lx = left_fit[0] * plot ** 2 + left_fit[1] * plot + left_fit[2]
         rx = right_fit[0] * plot ** 2 + right_fit[1] * plot + right_fit[2]
 

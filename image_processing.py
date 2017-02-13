@@ -9,6 +9,16 @@ def rescale_intensity(img, perc_a, perc_b):
     return img_rescale
 
 
+def adjust_brightness(img, factor):
+    yuv = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
+    y, u, v = cv2.split(yuv)
+    y = np.asarray(y, dtype=np.int32)
+    y += factor
+    y = np.asarray(np.clip(y, 0, 255), dtype=np.uint8)
+    yuv = cv2.merge((y, u, v))
+    return cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB)
+
+
 def abs_sobel_thresh(gray, orient='x', sobel_kernel=3, thresh=(0, 255)):
     x = True if orient == 'x' else False
     sobel = cv2.Sobel(gray, cv2.CV_64F, 1 if x else 0, 1 if not x else 0, ksize=sobel_kernel)
