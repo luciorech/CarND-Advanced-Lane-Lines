@@ -101,8 +101,7 @@ If there's no previous lane information (or lost track of the lanes):
   slice for the right lane markers)
   * Find the peak of the histogram in the slice, use this position as a starting horizontal coordinate
   * Split the slice into 10 horizontal slices and for each of them, starting with the bottom-most:
-    * Center a window of width 76px over the previous horizontal center position 
-  (or the histogram peak for the first window)
+    * Center a window of width 76px over the previous horizontal center position (or the histogram peak for the first window)
      * Find all active pixels in that region
      * If the number of pixels found is above the threshold (50):
         1. calculate the median X position and set it as the new center
