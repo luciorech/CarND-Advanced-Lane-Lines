@@ -2,6 +2,9 @@ import numpy as np
 
 
 class LaneMarker:
+    """
+    Stores info related to a lane marker
+    """
     ym_per_px = 30 / 720  # meters per pixel in y dimension
     xm_per_px = 3.7 / 700  # meters per pixel in x dimension
 

@@ -36,6 +36,9 @@ class LaneFinder:
         self._lane_departure_thr = 0.5
 
     def process_frame(self, img):
+        """
+        Given a video frame, annotates lane markers
+        """
         img_width = img.shape[1]
         img_height = img.shape[0]
 
@@ -72,7 +75,9 @@ class LaneFinder:
 
         warped = ip.perspective_transform(combined, src_pts, dst_pts)
 
+        # Lane detection method selection
         if len(self._previous_l) and len(self._previous_r) and self._failure_cnt < 3:
+            warped = self.region_of_interest(warped, 40)
             left_marker, right_marker, warped_dbg = self.find_lanes_poly_fit(warped,
                                                                              self._previous_l[-1],
                                                                              self._previous_r[-1])
@@ -81,9 +86,11 @@ class LaneFinder:
             self._failure_cnt = 0
 
         left_marker, right_marker = self.verify_markers(left_marker, right_marker)
+
         self._previous_l.append(left_marker)
         self._previous_r.append(right_marker)
 
+        # Get radius of curvature
         roc_l = np.mean([m.curvature_radius() for m in self._previous_l[-15:]])
         roc_r = np.mean([m.curvature_radius() for m in self._previous_r[-15:]])
         offset = self.car_offset(warped.shape, left_marker, right_marker, 0.25 / 0.24)
@@ -99,6 +106,8 @@ class LaneFinder:
         radius_str = "Curvature L: {0:5.0f}m R: {1:5.0f}m".format(roc_l, roc_r)
         cv2.putText(result, radius_str, (10, 40), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255))
         offset_str = "Car offset: {0:1.2f}m".format(offset)
+        if abs(offset) > self._lane_departure_thr:
+            offset_str += " LANE DEPARTURE WARNING"
         cv2.putText(result, offset_str, (10, 80), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255))
 
         if self._debug:
@@ -120,6 +129,9 @@ class LaneFinder:
         return result
 
     def verify_markers(self, left_marker, right_marker):
+        """
+        Checks if detected lane markers pass sanity tests
+        """
         failed = False
         if not left_marker:
             left_marker = self._previous_l[-1]
@@ -129,34 +141,40 @@ class LaneFinder:
             failed = True
 
         if len(self._previous_l) and len(self._previous_r):
-            # If lane marker is too far away from previous frame, we don't trust this measurement
-            y_pos_top = 50
-            y_pos_middle = 300
-            y_pos_bottom = 719
-            max_offset = 50
-            max_top_offset = 80
-            if abs(self._previous_l[-1].x_px_pos(y_pos_middle) - left_marker.x_px_pos(y_pos_middle)) > max_offset or \
-               abs(self._previous_l[-1].x_px_pos(y_pos_bottom) - left_marker.x_px_pos(y_pos_bottom)) > max_offset or \
-               abs(self._previous_l[-1].x_px_pos(y_pos_top) - left_marker.x_px_pos(y_pos_top)) > max_top_offset:
+            # If lane markers cross, we have a big failure and we force an update
+            if left_marker.x_px_pos(0) >= right_marker.x_px_pos(0):
+                self._failure_cnt += 100
                 left_marker = self._previous_l[-1]
-                failed = True
-            if abs(self._previous_r[-1].x_px_pos(y_pos_middle) - right_marker.x_px_pos(y_pos_middle)) > max_offset or \
-               abs(self._previous_r[-1].x_px_pos(y_pos_bottom) - right_marker.x_px_pos(y_pos_bottom)) > max_offset or \
-               abs(self._previous_r[-1].x_px_pos(y_pos_top) - right_marker.x_px_pos(y_pos_top)) > max_top_offset:
                 right_marker = self._previous_r[-1]
-                failed = True
-
-            # If lane markers do not agree in relation with curvature
-            # we estimate which one is correct based on quadratic factor of the polynomial
-            lx2 = left_marker.poly_fit_px()[0]
-            rx2 = right_marker.poly_fit_px()[0]
-            if abs(lx2 - rx2) > 3e-4 and ((lx2 < 0) != (rx2 < 0)):
-                lx2_diff = abs(lx2 - self._previous_l[-1].poly_fit_px()[0])
-                rx2_diff = abs(rx2 - self._previous_r[-1].poly_fit_px()[0])
-                if rx2_diff < lx2_diff:
+            else:
+                # If lane marker is too far away from previous frame, we don't trust this measurement
+                y_pos_top = 50
+                y_pos_middle = 300
+                y_pos_bottom = 719
+                max_offset = 50
+                max_top_offset = 80
+                if abs(self._previous_l[-1].x_px_pos(y_pos_middle) - left_marker.x_px_pos(y_pos_middle)) > max_offset or \
+                   abs(self._previous_l[-1].x_px_pos(y_pos_bottom) - left_marker.x_px_pos(y_pos_bottom)) > max_offset or \
+                   abs(self._previous_l[-1].x_px_pos(y_pos_top) - left_marker.x_px_pos(y_pos_top)) > max_top_offset:
                     left_marker = self._previous_l[-1]
-                else:
+                    failed = True
+                if abs(self._previous_r[-1].x_px_pos(y_pos_middle) - right_marker.x_px_pos(y_pos_middle)) > max_offset or \
+                   abs(self._previous_r[-1].x_px_pos(y_pos_bottom) - right_marker.x_px_pos(y_pos_bottom)) > max_offset or \
+                   abs(self._previous_r[-1].x_px_pos(y_pos_top) - right_marker.x_px_pos(y_pos_top)) > max_top_offset:
                     right_marker = self._previous_r[-1]
+                    failed = True
+
+                # If lane markers do not agree about curvature
+                # we estimate which one is correct based on the quadratic factor of the polynomial
+                lx2 = left_marker.poly_fit_px()[0]
+                rx2 = right_marker.poly_fit_px()[0]
+                if abs(lx2 - rx2) > 3e-4 and ((lx2 < 0) != (rx2 < 0)):
+                    lx2_diff = abs(lx2 - self._previous_l[-1].poly_fit_px()[0])
+                    rx2_diff = abs(rx2 - self._previous_r[-1].poly_fit_px()[0])
+                    if rx2_diff < lx2_diff:
+                        left_marker = self._previous_l[-1]
+                    else:
+                        right_marker = self._previous_r[-1]
 
         if failed:
             self._failure_cnt += 1
@@ -167,7 +185,27 @@ class LaneFinder:
     def debug_log(self):
         return self._debug_log
 
+    def region_of_interest(self, img, margin):
+        """
+        Masks out pixels that are too far from previously detected lanes
+        """
+        if len(self._previous_l) and len(self._previous_r):
+            l_fit = self._previous_l[-1].poly_fit_px()
+            r_fit = self._previous_r[-1].poly_fit_px()
+            y = np.linspace(0, img.shape[0]-1, img.shape[0])
+            lx = l_fit[0] * y ** 2 + l_fit[1] * y + l_fit[2]
+            rx = r_fit[0] * y ** 2 + r_fit[1] * y + r_fit[2]
+            for y in range(len(lx)):
+                min_ind = max(0, lx[y] - margin)
+                max_ind = rx[y] + margin
+                img[y][0:min_ind] = 0
+                img[y][max_ind:] = 0
+        return img
+
     def car_offset(self, shape, left_marker, right_marker, warp_factor):
+        """
+        Calculates how far from the center of the lane the car is
+        """
         lx = left_marker.x_px_pos(shape[0] - 1)
         rx = right_marker.x_px_pos(shape[0] - 1)
         center = shape[1] / 2
@@ -261,7 +299,7 @@ class LaneFinder:
         of the histogram
         """
         # Histogram of the bottom half of the image
-        histogram = np.sum(img[img.shape[0] // 2:, :], axis=0)
+        histogram = np.sum(img[1 * (img.shape[0] // 2):, :], axis=0)
 
         # Debug image
         dbg_img = None

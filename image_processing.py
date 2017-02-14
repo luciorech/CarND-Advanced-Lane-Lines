@@ -19,6 +19,17 @@ def adjust_brightness(img, factor):
     return cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB)
 
 
+def adjust_gamma(image, gamma=1.0):
+    # build a lookup table mapping the pixel values [0, 255] to
+    # their adjusted gamma values
+    inv_gamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** inv_gamma) * 255
+                      for i in np.arange(0, 256)]).astype("uint8")
+
+    # apply gamma correction using the lookup table
+    return cv2.LUT(image, table)
+
+
 def abs_sobel_thresh(gray, orient='x', sobel_kernel=3, thresh=(0, 255)):
     x = True if orient == 'x' else False
     sobel = cv2.Sobel(gray, cv2.CV_64F, 1 if x else 0, 1 if not x else 0, ksize=sobel_kernel)

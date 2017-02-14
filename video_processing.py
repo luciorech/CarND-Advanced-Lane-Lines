@@ -88,7 +88,9 @@ if __name__ == "__main__":
             right_fit = frame['right'].poly_fit_px()
             plot = np.linspace(0, pipeline_img.shape[0]-1, pipeline_img.shape[0])
             lx = left_fit[0] * plot ** 2 + left_fit[1] * plot + left_fit[2]
+            lx = np.clip(lx, 0, pipeline_img.shape[1] - 1)
             rx = right_fit[0] * plot ** 2 + right_fit[1] * plot + right_fit[2]
+            rx = np.clip(rx, 0, pipeline_img.shape[1] - 1)
             ax[3, 2].plot(lx, plot, color='yellow')
             ax[3, 2].plot(rx, plot, color='yellow')
             ax[3, 2].set_title('Warped', fontsize=10)
